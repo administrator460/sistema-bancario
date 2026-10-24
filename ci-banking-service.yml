@@ -1,0 +1,55 @@
+YAML
+name: CI Banking Microservice Pipeline
+
+on: 
+  push: 
+    branches: ["main", "develop"]
+  pull_requesh:
+    branches: ["main"]
+jobs:
+  build-and-test:
+    name: Build, Test & Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    #1. checkout del codigo fuente con trazabilidad de commits
+    -name: Checkout Code
+     uses: actions/checkout@v4
+     with:
+         fetch-depth: 0 # Necesario para analisis de historial e integracion contiuna
+    #2. configuracion del entorno
+    -name: Set up Node.js Environment
+     uses: actions/setup-node@v4
+     cache: 'npm'
+
+    #3. Instalacion de dependencias y pruebas unitarias
+    -name: Install Dependencies & Run Tests
+     run: |
+        npm ci
+        npm test -- --coverage
+    #4. Analisis SCA + Escaneo de dependencias
+    -name: Run SCA Scan (Trivy Filesystem)
+     uses: aquasecurity/trivy-action@master
+     with:
+       scan-type: 'fs'
+       scan-ref: '.'
+       severity: 'CRITICAL,HIGH'
+       exit-code: '1' # bloquea la ejecucion si detecta vulnerabilidades Altas o Criticas
+    #5. Analisis SAST 
+    -name: Run SAST Scan (Semgrep)
+      run: |
+        python3 -m pip install semgrep
+        semgrep --config=p/security-audit --error --quiet
+    #6. Construccion del contenedor
+    -name: Build Docker Image
+     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+     run: |
+       docker build -t registry.banco.local/core/banking-service:${{github.sha }} . 
+    #7. Publicacion de reportes de auditoria 
+    -name: Upload Security Reports
+     uses: actions/upload-artifact@v4
+     if: always()
+     with:
+       name: security-audit-reports
+       path: |
+         trivy-results.json
+         semgrep-results.json
